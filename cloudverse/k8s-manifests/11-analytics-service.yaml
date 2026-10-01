@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: cloudverse
+  labels:
+    app: analytics-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: analytics-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge:       1
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+    spec:
+      containers:
+        - name: analytics-service
+          image: 565725315365.dkr.ecr.us-east-1.amazonaws.com/cloudverse/analytics-service:v1
+          ports:
+            - containerPort: 4007
+          resources:
+            requests:
+              cpu:    50m
+              memory: 64Mi
+            limits:
+              cpu:    200m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4007
+            initialDelaySeconds: 10
+            periodSeconds:       20
+            timeoutSeconds:      5
+            failureThreshold:    3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4007
+            initialDelaySeconds: 5
+            periodSeconds:       10
+            timeoutSeconds:      3
+            failureThreshold:    3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+  namespace: cloudverse
+spec:
+  selector:
+    app: analytics-service
+  ports:
+    - port:       4007
+      targetPort: 4007
+  type: ClusterIP

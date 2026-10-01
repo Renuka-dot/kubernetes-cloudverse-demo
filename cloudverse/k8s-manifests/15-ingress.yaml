@@ -1,0 +1,107 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloudverse-ingress
+  namespace: cloudverse
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/load-balancer-name: cloudverse-alb
+    alb.ingress.kubernetes.io/tags: Project=CloudVerse,Env=Demo
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          # 🔐 AUTH SERVICE
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 4001
+
+          # 👤 USER SERVICE
+          - path: /api/user
+            pathType: Prefix
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 4002
+
+          # 🛍️ PRODUCT SERVICE
+          - path: /api/products
+            pathType: Prefix
+            backend:
+              service:
+                name: product-service
+                port:
+                  number: 4003
+
+          # 📦 ORDER SERVICE
+          - path: /api/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: 4004
+
+          # 🛒 CART SERVICE
+          - path: /api/cart
+            pathType: Prefix
+            backend:
+              service:
+                name: cart-service
+                port:
+                  number: 4005
+
+          # 🔔 NOTIFICATION SERVICE
+          - path: /api/notify
+            pathType: Prefix
+            backend:
+              service:
+                name: notification-service
+                port:
+                  number: 4006
+
+          # 📊 ANALYTICS SERVICE
+          - path: /api/analytics
+            pathType: Prefix
+            backend:
+              service:
+                name: analytics-service
+                port:
+                  number: 4007
+
+          # 🔍 SEARCH SERVICE
+          - path: /api/search
+            pathType: Prefix
+            backend:
+              service:
+                name: search-service
+                port:
+                  number: 4008
+
+          # 🔀 API GATEWAY
+          - path: /api/gateway
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway-service
+                port:
+                  number: 4000
+
+          # 🖥️ UI SERVICE
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ui-service
+                port:
+                  number: 3000
