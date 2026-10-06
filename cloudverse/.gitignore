@@ -1,2 +1,6 @@
 .aws/
 *.pem
+
+.aws/
+.kube/
+*.pem
