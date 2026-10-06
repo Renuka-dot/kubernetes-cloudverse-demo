@@ -5,7 +5,10 @@ pipeline {
     environment {
         AWS_REGION     = 'us-east-1'
         AWS_ACCOUNT_ID = '565725315365'
-        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        EKS_CLUSTER    = 'cloudverse-cluster'
+        NAMESPACE      = 'cloudverse'
+
+        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
         SERVICES = 'ui api-gateway auth-service user-service product-service order-service cart-service notification-service analytics-service search-service'
     }
@@ -17,64 +20,42 @@ pipeline {
 
     stages {
 
-        // =========================================================
-        // STAGE 1 - Checkout Source Code
-        // =========================================================
         stage('Checkout') {
             steps {
-                echo '========================================='
-                echo 'CHECKING OUT CLOUDVERSE SOURCE CODE'
-                echo '========================================='
+                echo '========== CHECKOUT =========='
 
                 checkout scm
 
                 sh '''
-                    echo "Git Commit:"
+                    echo "Commit:"
                     git rev-parse --short HEAD
 
-                    echo "Current Directory:"
+                    echo "Workspace:"
                     pwd
 
-                    echo "Repository Contents:"
                     ls -la
                 '''
             }
         }
 
-
-        // =========================================================
-        // STAGE 2 - Verify Required Tools
-        // =========================================================
         stage('Verify Tools') {
             steps {
-                echo '========================================='
-                echo 'VERIFYING REQUIRED TOOLS'
-                echo '========================================='
+                echo '========== VERIFY TOOLS =========='
 
                 sh '''
                     set -e
 
-                    echo "Docker:"
-                    docker --version
-
-                    echo "AWS CLI:"
-                    aws --version
-
-                    echo "Git:"
                     git --version
+                    docker --version
+                    aws --version
+                    kubectl version --client
                 '''
             }
         }
 
-
-        // =========================================================
-        // STAGE 3 - Verify AWS Identity
-        // =========================================================
-        stage('Verify AWS Access') {
+        stage('Verify AWS') {
             steps {
-                echo '========================================='
-                echo 'VERIFYING AWS ACCESS'
-                echo '========================================='
+                echo '========== VERIFY AWS =========='
 
                 sh '''
                     set -e
@@ -84,37 +65,57 @@ pipeline {
             }
         }
 
+        stage('Configure EKS') {
+            steps {
+                echo '========== CONFIGURE EKS =========='
 
-        // =========================================================
-        // STAGE 4 - Login to Amazon ECR
-        // =========================================================
+                sh '''
+                    set -e
+
+                    aws eks update-kubeconfig \
+                      --region "$AWS_REGION" \
+                      --name "$EKS_CLUSTER"
+
+                    kubectl get nodes
+                '''
+            }
+        }
+
+        stage('Create Namespace') {
+            steps {
+                echo '========== CREATE NAMESPACE =========='
+
+                sh '''
+                    set -e
+
+                    kubectl create namespace "$NAMESPACE" \
+                      --dry-run=client \
+                      -o yaml | kubectl apply -f -
+
+                    kubectl get namespace "$NAMESPACE"
+                '''
+            }
+        }
+
         stage('ECR Login') {
             steps {
-                echo '========================================='
-                echo 'LOGGING INTO AMAZON ECR'
-                echo '========================================='
+                echo '========== ECR LOGIN =========='
 
                 sh '''
                     set -e
 
                     aws ecr get-login-password \
-                      --region $AWS_REGION | \
+                      --region "$AWS_REGION" |
                     docker login \
                       --username AWS \
-                      --password-stdin $ECR_REGISTRY
+                      --password-stdin "$ECR_REGISTRY"
                 '''
             }
         }
 
-
-        // =========================================================
-        // STAGE 5 - Create ECR Repositories If Missing
-        // =========================================================
-        stage('Prepare ECR Repositories') {
+        stage('Prepare ECR') {
             steps {
-                echo '========================================='
-                echo 'CHECKING ECR REPOSITORIES'
-                echo '========================================='
+                echo '========== PREPARE ECR =========='
 
                 sh '''
                     set -e
@@ -123,47 +124,32 @@ pipeline {
                     do
                         REPOSITORY="cloudverse/$SERVICE"
 
-                        echo "-----------------------------------------"
-                        echo "Checking repository: $REPOSITORY"
-                        echo "-----------------------------------------"
+                        echo "Checking $REPOSITORY"
 
-                        if aws ecr describe-repositories \
-                            --repository-names "$REPOSITORY" \
-                            --region "$AWS_REGION" \
-                            >/dev/null 2>&1
-                        then
-                            echo "Repository already exists: $REPOSITORY"
-                        else
-                            echo "Creating repository: $REPOSITORY"
-
-                            aws ecr create-repository \
-                              --repository-name "$REPOSITORY" \
-                              --region "$AWS_REGION"
-                        fi
+                        aws ecr describe-repositories \
+                          --repository-names "$REPOSITORY" \
+                          --region "$AWS_REGION" \
+                          >/dev/null 2>&1 ||
+                        aws ecr create-repository \
+                          --repository-name "$REPOSITORY" \
+                          --region "$AWS_REGION"
                     done
                 '''
             }
         }
 
-
-        // =========================================================
-        // STAGE 6 - Build Docker Images
-        // =========================================================
-        stage('Build Docker Images') {
+        stage('Build Images') {
             steps {
-                echo '========================================='
-                echo 'BUILDING CLOUDVERSE DOCKER IMAGES'
-                echo '========================================='
+                echo '========== BUILD IMAGES =========='
 
                 sh '''
                     set -e
 
                     for SERVICE in $SERVICES
                     do
-                        echo ""
-                        echo "========================================="
-                        echo "BUILDING: $SERVICE"
-                        echo "========================================="
+                        echo "================================"
+                        echo "BUILDING $SERVICE"
+                        echo "================================"
 
                         docker build \
                           -t "$SERVICE:$BUILD_NUMBER" \
@@ -173,23 +159,15 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // STAGE 7 - Tag Docker Images for ECR
-        // =========================================================
-        stage('Tag Docker Images') {
+        stage('Tag Images') {
             steps {
-                echo '========================================='
-                echo 'TAGGING IMAGES FOR ECR'
-                echo '========================================='
+                echo '========== TAG IMAGES =========='
 
                 sh '''
                     set -e
 
                     for SERVICE in $SERVICES
                     do
-                        echo "Tagging $SERVICE:$BUILD_NUMBER"
-
                         docker tag \
                           "$SERVICE:$BUILD_NUMBER" \
                           "$ECR_REGISTRY/cloudverse/$SERVICE:$BUILD_NUMBER"
@@ -198,25 +176,16 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // STAGE 8 - Push Images to ECR
-        // =========================================================
-        stage('Push Images to ECR') {
+        stage('Push Images') {
             steps {
-                echo '========================================='
-                echo 'PUSHING CLOUDVERSE IMAGES TO ECR'
-                echo '========================================='
+                echo '========== PUSH IMAGES =========='
 
                 sh '''
                     set -e
 
                     for SERVICE in $SERVICES
                     do
-                        echo ""
-                        echo "========================================="
-                        echo "PUSHING: $SERVICE:$BUILD_NUMBER"
-                        echo "========================================="
+                        echo "Pushing $SERVICE:$BUILD_NUMBER"
 
                         docker push \
                           "$ECR_REGISTRY/cloudverse/$SERVICE:$BUILD_NUMBER"
@@ -225,94 +194,117 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // STAGE 9 - Verify Exact Images in ECR
-        // =========================================================
-        stage('Verify Images') {
+        stage('Deploy Kubernetes Manifests') {
             steps {
-                echo '========================================='
-                echo 'VERIFYING CLOUDVERSE ECR IMAGES'
-                echo '========================================='
+                echo '========== DEPLOY MANIFESTS =========='
+
+                sh '''
+                    set -e
+
+                    kubectl apply \
+                      -f cloudverse/k8s-manifests/ \
+                      -n "$NAMESPACE"
+                '''
+            }
+        }
+
+        stage('Update Application Images') {
+            steps {
+                echo '========== UPDATE IMAGES =========='
 
                 sh '''
                     set -e
 
                     for SERVICE in $SERVICES
                     do
-                        echo ""
-                        echo "========================================="
-                        echo "VERIFYING: $SERVICE:$BUILD_NUMBER"
-                        echo "========================================="
+                        echo "Updating deployment: $SERVICE"
 
-                        aws ecr describe-images \
-                          --repository-name "cloudverse/$SERVICE" \
-                          --image-ids imageTag="$BUILD_NUMBER" \
-                          --region "$AWS_REGION" \
-                          --query 'imageDetails[0].[imageDigest,imageTags]' \
-                          --output text
-
-                        echo "VERIFIED: $SERVICE:$BUILD_NUMBER"
+                        kubectl set image \
+                          deployment/"$SERVICE" \
+                          "$SERVICE"="$ECR_REGISTRY/cloudverse/$SERVICE:$BUILD_NUMBER" \
+                          -n "$NAMESPACE"
                     done
                 '''
             }
         }
 
-
-        // =========================================================
-        // STAGE 10 - Display Build Summary
-        // =========================================================
-        stage('Build Summary') {
+        stage('Wait for Rollout') {
             steps {
-                echo '========================================='
-                echo 'CLOUDVERSE BUILD SUMMARY'
-                echo '========================================='
+                echo '========== WAIT FOR ROLLOUT =========='
 
                 sh '''
-                    echo "Jenkins Build Number: $BUILD_NUMBER"
-                    echo "AWS Region: $AWS_REGION"
-                    echo "ECR Registry: $ECR_REGISTRY"
-                    echo ""
-                    echo "Images created:"
-                    echo ""
+                    set -e
 
                     for SERVICE in $SERVICES
                     do
-                        echo "$ECR_REGISTRY/cloudverse/$SERVICE:$BUILD_NUMBER"
+                        echo "Waiting for $SERVICE"
+
+                        kubectl rollout status \
+                          deployment/"$SERVICE" \
+                          -n "$NAMESPACE" \
+                          --timeout=300s
                     done
+                '''
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                echo '========== VERIFY DEPLOYMENT =========='
+
+                sh '''
+                    echo ""
+                    echo "========== PODS =========="
+                    kubectl get pods -n "$NAMESPACE" -o wide
+
+                    echo ""
+                    echo "========== DEPLOYMENTS =========="
+                    kubectl get deployments -n "$NAMESPACE"
+
+                    echo ""
+                    echo "========== SERVICES =========="
+                    kubectl get svc -n "$NAMESPACE"
+
+                    echo ""
+                    echo "========== INGRESS =========="
+                    kubectl get ingress -n "$NAMESPACE"
+
+                    echo ""
+                    echo "========== CURRENT IMAGES =========="
+                    kubectl get deployments \
+                      -n "$NAMESPACE" \
+                      -o custom-columns=DEPLOYMENT:.metadata.name,IMAGE:.spec.template.spec.containers[*].image
                 '''
             }
         }
     }
 
-
-    // =============================================================
-    // POST ACTIONS
-    // =============================================================
     post {
 
         success {
-            echo '========================================='
-            echo 'CLOUDVERSE BUILD SUCCESSFUL'
-            echo '========================================='
-            echo 'All Docker images were built and pushed'
-            echo 'successfully to Amazon ECR.'
-            echo '========================================='
+            echo '======================================'
+            echo ' CLOUDVERSE CI/CD SUCCESSFUL'
+            echo '======================================'
         }
 
         failure {
-            echo '========================================='
-            echo 'CLOUDVERSE BUILD FAILED'
-            echo 'Check Jenkins Console Output'
-            echo '========================================='
+            echo '======================================'
+            echo ' CLOUDVERSE CI/CD FAILED'
+            echo '======================================'
+
+            sh '''
+                kubectl get pods -n "$NAMESPACE" || true
+                kubectl get events -n "$NAMESPACE" \
+                  --sort-by=.lastTimestamp | tail -30 || true
+            '''
         }
 
         always {
-            echo '========================================='
-            echo "Jenkins Build: ${BUILD_NUMBER}"
-            echo 'PIPELINE FINISHED'
-            echo '========================================='
+            echo 'Cleaning Docker build cache'
+
+            sh '''
+                docker image prune -f || true
+            '''
         }
     }
 }
-
