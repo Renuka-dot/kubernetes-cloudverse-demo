@@ -17,23 +17,6 @@ spec:
       labels:
         app: postgres
     spec:
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: role
-                    operator: In
-                    values:
-                      - database
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              preference:
-                matchExpressions:
-                  - key: node-type
-                    operator: In
-                    values:
-                      - storage-optimized
       containers:
         - name: postgres
           image: postgres:15-alpine
